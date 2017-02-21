@@ -35,10 +35,10 @@ class Attention:
         self.src_token_to_id, self.src_id_to_token = self.vw_src.w2i, self.vw_src.i2w
         self.tgt_token_to_id, self.tgt_id_to_token = self.vw_tgt.w2i, self.vw_tgt.i2w
 
-        self.pad = '</S>'
+        self.pad = '<S>'
 
         self.max_len = 50
-        self.BATCH_SIZE = 10
+        self.BATCH_SIZE = 5
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.attention_size = attention_size
@@ -84,32 +84,29 @@ class Attention:
 
     def __pad_batch(self, batch, src=True):
 
-        max_batch_len = len(batch[0])
+        max_batch_len = len(max(batch, key=len))
+    #    print 'MAX:', len(max(batch, key=len))
         padded_batch = []
         for sent in batch:
+    #        print sent
     #        print len(sent)
             if src:
-                sent = [self.src_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.src_token_to_id[x] for x in sent]
+                sent =  [self.src_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.src_token_to_id[x] for x in sent]
             else:
-                sent = [self.tgt_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.tgt_token_to_id[x] for x in sent]
+                sent =  [self.tgt_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.tgt_token_to_id[x] for x in sent]
     #        print sent
+    #        print 'padding:', len(sent)
             padded_batch.append(sent)
         return padded_batch
 
     def __mask(self, batch):
 
         masks = []
+        max_len = len(max(batch, key=len))
         for padded_sent in batch:
             len_sent = len(padded_sent)
-            mask = []
-            for i in xrange(len_sent):
-                token = padded_sent[i]
-                if (token == self.src_token_to_id[self.pad] or token == self.tgt_token_to_id[self.pad]) and (i != len_sent - 1):
-                    mask.append(0)
-                else:
-                    mask.append(1)
-            masks.append(mask)
-            #masks.append([(0 if (x == self.src_token_to_id[self.pad] or x == self.tgt_token_to_id[self.pad])  else 1) for x in padded_sent])
+    #        print 'mask:', len_sent + (max_len - len_sent)
+            masks.append([0] * (max_len - len_sent) + [1] * len_sent)
         return masks
 
     # Training step over a sentence batch
@@ -133,7 +130,7 @@ class Attention:
     #    print src_cws
 
         tgt_sents = [x[1] for x in instances]
-        print len(src_sents), len(tgt_sents)
+    #    print len(src_sents), len(tgt_sents)
         padded_tgt = np.transpose(self.__pad_batch(tgt_sents, False))
         masks_tgt = self.__mask(padded_tgt)
         #return
@@ -168,7 +165,7 @@ class Attention:
         start = dy.concatenate([dy.lookup(self.tgt_lookup, self.tgt_token_to_id['<S>']), c_t])
         dec_state = self.dec_builder.initial_state().add_input(start)
         #print 'whaaa', dec_state.output().value()
-        for (cws, nws, mask) in zip(padded_tgt, padded_tgt[1:], masks_src):
+        for (cws, nws, mask) in zip(padded_tgt, padded_tgt[1:], masks_tgt):
             h_e = dec_state.output()
             c_t = self.__attention_mlp(h_fs_matrix, h_e)
 
@@ -183,18 +180,18 @@ class Attention:
             loss = dy.pickneglogsoftmax_batch(y_star, nws)#-dy.log(dy.pick(y_star, nws))
         #    print len(mask)
     #        print 'made it here'
-            if mask[-1] == 0:
+            if mask[0] == 0:
         #        print len(mask)#, len(loss.npvalue())
         #        print mask
                 mask_loss = dy.reshape(dy.inputVector(mask), (1,), self.BATCH_SIZE)
                 loss = loss * mask_loss
-    #            print 'LOSS:', loss.npvalue()
+    #            print 'LOSS:', loss.value()
 
             losses.append(loss)
             num_words += 1
         #dy.print_graphviz()
 
-        print 'Now my watch has ended'
+    #    print 'Now my watch has ended'
         return dy.sum_batches(dy.esum(losses)), num_words
 
     def translate_sentence(self, sent):
@@ -239,7 +236,7 @@ class Attention:
             y_star = b_y + W_y * dec_state.output()
             p = dy.softmax(y_star)
             cw = self.tgt_id_to_token[np.argmax(p.npvalue())]
-            print np.max(p.npvalue())
+    #        print np.max(p.npvalue())
             if cw == '</S>':
                 break
             trans_sentence.append(cw)
@@ -271,18 +268,17 @@ def main():
     train_src = [sent[0] for sent in train_data]
     train_tgt = [sent[1] for sent in train_data]
 #    print [len(x) for x in train_src]
-    BATCH_SIZE = 10
     #return
     for epoch in range(200):
             epoch_loss = 0
             train_zip = zip(train_src, train_tgt)
             i = 0
-            for instance in train_zip:
+            for j in xrange(len(train_zip) / attention.BATCH_SIZE):
                 #print len(train_zip[i:i+BATCH_SIZE])
                 #print train_zip[i:i+BATCH_SIZE]
                 #return
-                esum,num_words = attention.step_batch(train_zip[i:i+BATCH_SIZE])
-                i += BATCH_SIZE
+                esum,num_words = attention.step_batch(train_zip[i:i+attention.BATCH_SIZE])
+                i += attention.BATCH_SIZE
                 #print esum, num_words
                 print esum.scalar_value()
                 epoch_loss += esum.scalar_value()
@@ -291,6 +287,7 @@ def main():
                 trainer.update()
 
             print("Epoch %d: loss=%f" % (epoch, epoch_loss))
+            trainer.update_epoch(1.0)
             print attention.translate_sentence(train_src[0])
 
 
