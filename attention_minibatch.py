@@ -6,7 +6,7 @@ import sys
 from itertools import count
 
 
-## from tutorial
+## from EMNLP tutorial
 class Vocab:
     def __init__(self, w2i=None):
         if w2i is None: w2i = defaultdict(count(0).next)
@@ -26,6 +26,7 @@ class Attention:
 
         self.vw_src = Vocab.from_corpus(training_src)
         self.vw_tgt = Vocab.from_corpus(training_tgt)
+
         self.src_vocab_size = self.vw_src.size()
         self.tgt_vocab_size = self.vw_tgt.size()
 
@@ -34,8 +35,10 @@ class Attention:
         self.src_token_to_id, self.src_id_to_token = self.vw_src.w2i, self.vw_src.i2w
         self.tgt_token_to_id, self.tgt_id_to_token = self.vw_tgt.w2i, self.vw_tgt.i2w
 
+        self.pad = '</S>'
+
         self.max_len = 50
-        self.pad = '<S>'
+        self.BATCH_SIZE = 10
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.attention_size = attention_size
@@ -72,7 +75,6 @@ class Attention:
         w2_att = dy.parameter(self.w2_att)
 
         # Calculate the alignment score vector
-        # Hint: Can we make this more efficient?
         a_t = self.__calc_attn_score(W1_att_f, W1_att_e, w2_att, h_fs_matrix, h_e)
         alignment = dy.softmax(a_t)
         c_t = h_fs_matrix * alignment
@@ -85,10 +87,12 @@ class Attention:
         max_batch_len = len(batch[0])
         padded_batch = []
         for sent in batch:
+    #        print len(sent)
             if src:
                 sent = [self.src_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.src_token_to_id[x] for x in sent]
             else:
                 sent = [self.tgt_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.tgt_token_to_id[x] for x in sent]
+    #        print sent
             padded_batch.append(sent)
         return padded_batch
 
@@ -96,11 +100,20 @@ class Attention:
 
         masks = []
         for padded_sent in batch:
-            masks.append([(0 if (x == self.src_token_to_id[self.pad] or x == self.tgt_token_to_id[self.pad])  else 1) for x in padded_sent])
+            len_sent = len(padded_sent)
+            mask = []
+            for i in xrange(len_sent):
+                token = padded_sent[i]
+                if (token == self.src_token_to_id[self.pad] or token == self.tgt_token_to_id[self.pad]) and (i != len_sent - 1):
+                    mask.append(0)
+                else:
+                    mask.append(1)
+            masks.append(mask)
+            #masks.append([(0 if (x == self.src_token_to_id[self.pad] or x == self.tgt_token_to_id[self.pad])  else 1) for x in padded_sent])
         return masks
 
     # Training step over a sentence batch
-    def step(self, instances):
+    def step_batch(self, instances):
         dy.renew_cg()
 
         W_y = dy.parameter(self.W_y)
@@ -110,17 +123,18 @@ class Attention:
 
         src_sents = [x[0] for x in instances]
         padded_src = self.__pad_batch(src_sents)
-        masks_src = self.__mask(padded_src)
+        masks_src = np.transpose(self.__mask(padded_src))
 
         src_cws = np.transpose(padded_src)
         #src_cws = [list for cws in src_cws]
         print
         print
-        print padded_src
-        print src_cws
+    #    print padded_src
+    #    print src_cws
 
         tgt_sents = [x[1] for x in instances]
-        padded_tgt = self.__pad_batch(tgt_sents, False)
+        print len(src_sents), len(tgt_sents)
+        padded_tgt = np.transpose(self.__pad_batch(tgt_sents, False))
         masks_tgt = self.__mask(padded_tgt)
         #return
         #src_sent, tgt_sent = instances
@@ -153,7 +167,8 @@ class Attention:
         c_t = dy.vecInput(self.hidden_size * 2)
         start = dy.concatenate([dy.lookup(self.tgt_lookup, self.tgt_token_to_id['<S>']), c_t])
         dec_state = self.dec_builder.initial_state().add_input(start)
-        for (cws, nws, mask) in zip(padded_tgt, padded_tgt[1:], masks_tgt):
+        #print 'whaaa', dec_state.output().value()
+        for (cws, nws, mask) in zip(padded_tgt, padded_tgt[1:], masks_src):
             h_e = dec_state.output()
             c_t = self.__attention_mlp(h_fs_matrix, h_e)
 
@@ -163,17 +178,22 @@ class Attention:
             # Create input vector to the decoder
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
-            print cws, nws
-            y_star = dy.softmax(b_y + W_y * dec_state.output())
+            #print 'what', dec_state.output().value()
+            y_star = b_y + W_y * dec_state.output()
             loss = dy.pickneglogsoftmax_batch(y_star, nws)#-dy.log(dy.pick(y_star, nws))
+        #    print len(mask)
+    #        print 'made it here'
             if mask[-1] == 0:
+        #        print len(mask)#, len(loss.npvalue())
+        #        print mask
                 mask_loss = dy.reshape(dy.inputVector(mask), (1,), self.BATCH_SIZE)
                 loss = loss * mask_loss
+    #            print 'LOSS:', loss.npvalue()
 
             losses.append(loss)
             num_words += 1
-        print 'done?'
-        print dy.sum_batches(dy.esum(losses)).scalar_value()
+        #dy.print_graphviz()
+
         print 'Now my watch has ended'
         return dy.sum_batches(dy.esum(losses)), num_words
 
@@ -250,22 +270,23 @@ def main():
 
     train_src = [sent[0] for sent in train_data]
     train_tgt = [sent[1] for sent in train_data]
-    print [len(x) for x in train_src]
+#    print [len(x) for x in train_src]
     BATCH_SIZE = 10
     #return
     for epoch in range(200):
             epoch_loss = 0
             train_zip = zip(train_src, train_tgt)
-            for i, instance in enumerate(train_zip):
-                print len(train_zip[i:i+BATCH_SIZE])
-                print train_zip[i:i+BATCH_SIZE]
+            i = 0
+            for instance in train_zip:
+                #print len(train_zip[i:i+BATCH_SIZE])
+                #print train_zip[i:i+BATCH_SIZE]
                 #return
-                esum,num_words = attention.step(train_zip[i:i+BATCH_SIZE])
+                esum,num_words = attention.step_batch(train_zip[i:i+BATCH_SIZE])
+                i += BATCH_SIZE
                 #print esum, num_words
-                print 'here?'
                 print esum.scalar_value()
                 epoch_loss += esum.scalar_value()
-                print 'cash me ousside'
+            #    print 'cash me ousside'
                 esum.backward()
                 trainer.update()
 
