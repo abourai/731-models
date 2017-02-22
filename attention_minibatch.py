@@ -7,7 +7,7 @@ import time
 from itertools import count
 
 
-## from EMNLP tutorial
+## from EMNLP tutorial code
 class Vocab:
     def __init__(self, w2i=None):
         if w2i is None: w2i = defaultdict(count(0).next)
@@ -48,9 +48,11 @@ class Attention:
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
         self.l2r_builder = dy.LSTMBuilder(self.layers, self.embed_size, self.hidden_size, model)
         self.r2l_builder = dy.LSTMBuilder(self.layers, self.embed_size, self.hidden_size, model)
+    #    self.l2r_builder.set_dropout(0.5)
+    #    self.r2l_builder.set_dropout(0.5)
 
         self.dec_builder = dy.LSTMBuilder(self.layers, 2 * self.hidden_size + self.embed_size , self.hidden_size, model)
-
+    #    self.dec_builder.set_dropout(0.2)
         self.W_y = model.add_parameters((self.tgt_vocab_size, self.hidden_size))
         self.b_y = model.add_parameters((self.tgt_vocab_size))
 
@@ -60,11 +62,9 @@ class Attention:
 
 
     def __calc_attn_score(self, W1_att_f, W1_att_e, w2_att, h_fs_matrix, h_e):
-        #print type(h_fs_matrix)
         h_e_matrix = dy.concatenate_cols([h_e for i in range(h_fs_matrix.npvalue().shape[1])])
         layer_1 = dy.tanh(W1_att_f * h_fs_matrix + W1_att_e * h_e_matrix)
 
-        #print 'continues'
         return dy.transpose(layer_1) * w2_att
 
     # Calculates the context vector using a MLP
@@ -86,17 +86,14 @@ class Attention:
     def __pad_batch(self, batch, src=True):
 
         max_batch_len = len(max(batch, key=len))
-    #    print 'MAX:', len(max(batch, key=len))
+
         padded_batch = []
         for sent in batch:
-    #        print sent
-    #        print len(sent)
+
             if src:
                 sent =  [self.src_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.src_token_to_id[x] for x in sent]
             else:
                 sent =  [self.tgt_token_to_id[self.pad]] *  (max_batch_len - len(sent)) + [self.tgt_token_to_id[x] for x in sent]
-    #        print sent
-    #        print 'padding:', len(sent)
             padded_batch.append(sent)
         return padded_batch
 
@@ -106,7 +103,7 @@ class Attention:
         max_len = len(max(batch, key=len))
         for padded_sent in batch:
             len_sent = len(padded_sent)
-    #        print 'mask:', len_sent + (max_len - len_sent)
+
             masks.append([0] * (max_len - len_sent) + [1] * len_sent)
         return masks
 
@@ -116,41 +113,24 @@ class Attention:
 
         W_y = dy.parameter(self.W_y)
         b_y = dy.parameter(self.b_y)
-#        W1_att = dy.parameter(self.W1_att)
-        #w2_att = dy.parameter(self.w2_att)
 
         src_sents = [x[0] for x in instances]
         padded_src = self.__pad_batch(src_sents)
         masks_src = np.transpose(self.__mask(padded_src))
-#        print padded_src
+
         src_cws = np.transpose(padded_src)
-#        print src_cws
-        #src_cws = [list for cws in src_cws]
-    #    print padded_src
-    #    print src_cws
 
         tgt_sents = [x[1] for x in instances]
         tgt_ids = []
-    #    print len(tgt_sents)
+
         for sent in tgt_sents:
             sent = [self.tgt_token_to_id[x] for x in sent]
             tgt_ids.append(sent)
-            #print tgt_ids
-    #    print np.transpose(tgt_ids)
-        tgt_ids = map(list, zip(*tgt_ids))
-        #print tgt_ids
-        #print np.transpose(tgt_sents)
-        #tgt_sents = np.transpose(tgt_ids)
-    #    print len(src_sents), len(tgt_sents)
 
-        #padded_tgt = np.transpose(self.__pad_batch(tgt_sents, False))
-        #masks_tgt = self.__mask(padded_tgt)
-        #return
-        #src_sent, tgt_sent = instances
+        tgt_ids = map(list, zip(*tgt_ids))
+
         padded_src_rev = list(reversed(padded_src))
         src_cws_rev = np.transpose(padded_src_rev)
-    #    src_cws_rev = [list(map(self.src_token_to_id, cws)) for cws in src_cws_rev]
-
 
         # Bidirectional representations
         l2r_state = self.l2r_builder.initial_state()
@@ -158,7 +138,7 @@ class Attention:
         l2r_contexts = []
         r2l_contexts = []
         for (cws_l2r, cws_r2l) in zip(src_cws, src_cws_rev):
-        #    print cws_l2r
+
             l2r_state = l2r_state.add_input(dy.lookup_batch(self.src_lookup, cws_l2r))
             r2l_state = r2l_state.add_input(dy.lookup_batch(self.src_lookup, cws_r2l))
             l2r_contexts.append(l2r_state.output()) #[<S>, x_1, x_2, ..., </S>]
@@ -177,34 +157,29 @@ class Attention:
         c_t = dy.vecInput(self.hidden_size * 2)
         start = dy.concatenate([dy.lookup_batch(self.tgt_lookup, len(tgt_sents) * [self.tgt_token_to_id['<S>']]), c_t])
         dec_state = self.dec_builder.initial_state().add_input(start)
-        #print 'whaaa', dec_state.output().value()
+
         for (cws, nws, mask) in zip(tgt_ids, tgt_ids[1:], masks_src):
             h_e = dec_state.output()
             c_t = self.__attention_mlp(h_fs_matrix, h_e)
 
             # Get the embedding for the current target word
             embed_t = dy.lookup_batch(self.tgt_lookup, cws)
-        #    print cws, nws
+
             # Create input vector to the decoder
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
-        #    print 'what', dec_state.output().value()
+
             y_star = b_y + W_y * dec_state.output()
             loss = dy.pickneglogsoftmax_batch(y_star, nws)#-dy.log(dy.pick(y_star, nws))
-        #    print len(mask)
-    #        print 'made it here'
+
             if mask[0] == 0:
-        #        print len(mask)#, len(loss.npvalue())
-        #        print mask
+
                 mask_loss = dy.reshape(dy.inputVector(mask), (1,), self.BATCH_SIZE)
                 loss = loss * mask_loss
-    #            print 'LOSS:', loss.value()
 
             losses.append(loss)
             num_words += 1
-        #dy.print_graphviz()
 
-    #    print 'Now my watch has ended'
         return dy.sum_batches(dy.esum(losses)), num_words
 
     def translate_sentence(self, sent):
@@ -212,8 +187,6 @@ class Attention:
 
         W_y = dy.parameter(self.W_y)
         b_y = dy.parameter(self.b_y)
-        #W1_att = dy.parameter(self.W1_att)
-        #w2_att = dy.parameter(self.w2_att)
 
         sent_rev = list(reversed(sent))
 
@@ -249,7 +222,7 @@ class Attention:
             y_star = b_y + W_y * dec_state.output()
             p = dy.softmax(y_star)
             cw = self.tgt_id_to_token[np.argmax(p.npvalue())]
-    #        print np.max(p.npvalue())
+
             if cw == '</S>':
                 break
             trans_sentence.append(cw)
@@ -271,37 +244,30 @@ def main():
     dev_tgt = read_file(sys.argv[4])
     test_src = read_file(sys.argv[5])
     attention = Attention(model, list(training_src), list(training_tgt))
-    #print training_src
-    print
-    print
-    #return
+
     train_data = zip(training_src, training_tgt)
     train_data.sort(key=lambda x: -len(x[0]))
 
     train_src = [sent[0] for sent in train_data]
     train_tgt = [sent[1] for sent in train_data]
-#    print [len(x) for x in train_src]
-    #return
+
     start = time.time()
     for epoch in range(200):
             epoch_loss = 0
             train_zip = zip(train_src, train_tgt)
             i = 0
-            #print len(train_zip[i:i+BATCH_SIZE])
-            #print train_zip[i:i+BATCH_SIZE]
-            #return
+
             while i < len(train_zip):
                 esum,num_words = attention.step_batch(train_zip[i:i+attention.BATCH_SIZE])
                 i += attention.BATCH_SIZE
-                #print esum, num_words
-            #    print esum.scalar_value() / num_words
+
                 epoch_loss += esum.scalar_value() / num_words
-            #    print 'cash me ousside'
+
                 esum.backward()
                 trainer.update()
             if epoch_loss < 10:
                 end = time.time()
-                print 'TIME ELAPSED:', end - start
+                print 'TIME ELAPSED:', end - start, 'SECONDS'
                 break
             print("Epoch %d: loss=%f" % (epoch, epoch_loss))
             trainer.update_epoch(1.0)
