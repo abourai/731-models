@@ -261,7 +261,7 @@ def main():
     train_tgt = [sent[1] for sent in train_data]
 
     start = time.time()
-    for epoch in range(10):
+    for epoch in range(5000):
             epoch_loss = 0
             train_zip = zip(train_src, train_tgt)
             i = 0
@@ -275,7 +275,9 @@ def main():
             #     end = time.time()
             #     print 'TIME ELAPSED:', end - start, 'SECONDS'
             #     break
+            print 'Epoch:',epoch
             training_log.write("Epoch %d: loss=%f \n" % (epoch, epoch_loss))
+            training_log.flush()
             trainer.update_epoch(1.0)
             training_log.write(attention.translate_sentence(training_src[0])+'\n')
             if epoch % 100 == 0:
