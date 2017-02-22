@@ -1,10 +1,14 @@
 from collections import defaultdict
 import dynet as dy
+#import _gdynet as dy
 import numpy as np
 import random
 import sys
 import time
 from itertools import count
+from datetime import datetime
+
+#dy.init()
 
 
 ## from EMNLP tutorial code
@@ -23,7 +27,7 @@ class Vocab:
     def size(self): return len(self.w2i.keys())
 
 class Attention:
-    def __init__(self, model, training_src, training_tgt, embed_size=200, hidden_size=200, attention_size=150):
+    def __init__(self, model, training_src, training_tgt, embed_size=500, hidden_size=500, attention_size=200):
 
         self.vw_src = Vocab.from_corpus(training_src)
         self.vw_tgt = Vocab.from_corpus(training_tgt)
@@ -38,8 +42,8 @@ class Attention:
 
         self.pad = '<S>'
 
-        self.max_len = 50
-        self.BATCH_SIZE = 3
+        self.max_len = 80
+        self.BATCH_SIZE = 100
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.attention_size = attention_size
@@ -60,6 +64,15 @@ class Attention:
         self.W1_att_e = model.add_parameters((self.attention_size, self.hidden_size))
         self.w2_att = model.add_parameters((self.attention_size))
 
+    def restore(self,model,epoch_num):
+        (self.src_lookup,self.tgt_lookup,self.l2r_builder,self.r2l_builder,self.dec_builder,self.W_y,self.b_y,
+            self.W1_att_f,self.W1_att_e,self.w2_att) = model.load('attention.parameters-epoch-'+str(epoch_num))
+
+    def save(self,epoch_num):
+        self.model.save("attention.parameters-epoch-"+str(epoch_num),[self.src_lookup,self.tgt_lookup,self.l2r_builder,
+            self.r2l_builder,self.dec_builder,self.W_y,self.b_y,self.W1_att_f,self.W1_att_e,self.w2_att])
+        
+
 
     def __calc_attn_score(self, W1_att_f, W1_att_e, w2_att, h_fs_matrix, h_e):
         h_e_matrix = dy.concatenate_cols([h_e for i in range(h_fs_matrix.npvalue().shape[1])])
@@ -79,7 +92,6 @@ class Attention:
         a_t = self.__calc_attn_score(W1_att_f, W1_att_e, w2_att, h_fs_matrix, h_e)
         alignment = dy.softmax(a_t)
         c_t = h_fs_matrix * alignment
-        #print 'issue here'
         return c_t
 
 
@@ -173,7 +185,6 @@ class Attention:
             loss = dy.pickneglogsoftmax_batch(y_star, nws)#-dy.log(dy.pick(y_star, nws))
 
             if mask[0] == 0:
-
                 mask_loss = dy.reshape(dy.inputVector(mask), (1,), self.BATCH_SIZE)
                 loss = loss * mask_loss
 
@@ -189,7 +200,6 @@ class Attention:
         b_y = dy.parameter(self.b_y)
 
         sent_rev = list(reversed(sent))
-
         # Bidirectional representations
         l2r_state = self.l2r_builder.initial_state()
         r2l_state = self.r2l_builder.initial_state()
@@ -222,11 +232,9 @@ class Attention:
             y_star = b_y + W_y * dec_state.output()
             p = dy.softmax(y_star)
             cw = self.tgt_id_to_token[np.argmax(p.npvalue())]
-
             if cw == '</S>':
                 break
             trans_sentence.append(cw)
-
         return ' '.join(trans_sentence[1:])
 
 def read_file(file_name):
@@ -236,6 +244,7 @@ def read_file(file_name):
 
 
 def main():
+    training_log = open('training-'+str(datetime.now())+'.log','w')
     model = dy.Model()
     trainer = dy.SimpleSGDTrainer(model)
     training_src = read_file(sys.argv[1])
@@ -252,26 +261,29 @@ def main():
     train_tgt = [sent[1] for sent in train_data]
 
     start = time.time()
-    for epoch in range(200):
+    for epoch in range(10):
             epoch_loss = 0
             train_zip = zip(train_src, train_tgt)
             i = 0
-
             while i < len(train_zip):
                 esum,num_words = attention.step_batch(train_zip[i:i+attention.BATCH_SIZE])
                 i += attention.BATCH_SIZE
-
                 epoch_loss += esum.scalar_value() / num_words
-
                 esum.backward()
                 trainer.update()
-            if epoch_loss < 10:
-                end = time.time()
-                print 'TIME ELAPSED:', end - start, 'SECONDS'
-                break
-            print("Epoch %d: loss=%f" % (epoch, epoch_loss))
+            # if epoch_loss < 10:
+            #     end = time.time()
+            #     print 'TIME ELAPSED:', end - start, 'SECONDS'
+            #     break
+            training_log.write("Epoch %d: loss=%f \n" % (epoch, epoch_loss))
             trainer.update_epoch(1.0)
-            print attention.translate_sentence(training_src[0])
-
+            training_log.write(attention.translate_sentence(training_src[0])+'\n')
+            if epoch % 100 == 0:
+                attention.save(epoch)
+    # new_model = dy.Model()
+    # new_attention = Attention(new_model, list(training_src), list(training_tgt))
+    # new_attention.restore(model,10)
+    # print new_attention.translate_sentence(training_src[0])
+            
 
 if __name__ == '__main__': main()
