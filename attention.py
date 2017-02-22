@@ -3,6 +3,7 @@ import dynet as dy
 import numpy as np
 import random
 import sys
+import time
 from itertools import count
 
 
@@ -194,16 +195,19 @@ def main():
     dev_tgt = read_file(sys.argv[4])
     test_src = read_file(sys.argv[5])
     attention = Attention(model, list(training_src), list(training_tgt))
-
+    start = time.time()
     for epoch in range(200):
             epoch_loss = 0
             for instance in zip(training_src,training_tgt):
                 esum,num_words = attention.step(instance)
                 #print esum, num_words
-                epoch_loss += esum.scalar_value()
+                epoch_loss += esum.scalar_value() / num_words
                 esum.backward()
                 trainer.update()
-
+            if epoch_loss < 10:
+                end = time.time()
+                print 'TIME ELAPSED:', end - start
+                break
             print("Epoch %d: loss=%f" % (epoch, epoch_loss))
             print attention.translate_sentence(training_src[0])
 
