@@ -27,7 +27,7 @@ class Vocab:
     def size(self): return len(self.w2i.keys())
 
 class Attention:
-    def __init__(self, model, training_src, training_tgt, embed_size=500, hidden_size=500, attention_size=200):
+    def __init__(self, model, training_src, training_tgt, embed_size=150, hidden_size=150, attention_size=100):
 
         self.vw_src = Vocab.from_corpus(training_src)
         self.vw_tgt = Vocab.from_corpus(training_tgt)
@@ -42,8 +42,8 @@ class Attention:
 
         self.pad = '<S>'
 
-        self.max_len = 80
-        self.BATCH_SIZE = 100
+        self.max_len = 50
+        self.BATCH_SIZE = 10
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.attention_size = attention_size
@@ -71,11 +71,12 @@ class Attention:
     def save(self,epoch_num):
         self.model.save("attention.parameters-epoch-"+str(epoch_num),[self.src_lookup,self.tgt_lookup,self.l2r_builder,
             self.r2l_builder,self.dec_builder,self.W_y,self.b_y,self.W1_att_f,self.W1_att_e,self.w2_att])
-        
+
 
 
     def __calc_attn_score(self, W1_att_f, W1_att_e, w2_att, h_fs_matrix, h_e):
-        h_e_matrix = dy.concatenate_cols([h_e for i in range(h_fs_matrix.npvalue().shape[1])])
+        matrix_size = h_fs_matrix.npvalue().shape[1]
+        h_e_matrix = dy.concatenate_cols([h_e for i in range(matrix_size)])
         layer_1 = dy.tanh(W1_att_f * h_fs_matrix + W1_att_e * h_e_matrix)
 
         return dy.transpose(layer_1) * w2_att
@@ -191,7 +192,7 @@ class Attention:
             losses.append(loss)
             num_words += 1
 
-        return dy.sum_batches(dy.esum(losses)), num_words
+        return dy.sum_batches(dy.esum(losses) / num_words), num_words
 
     def translate_sentence(self, sent):
         dy.renew_cg()
@@ -268,14 +269,15 @@ def main():
             while i < len(train_zip):
                 esum,num_words = attention.step_batch(train_zip[i:i+attention.BATCH_SIZE])
                 i += attention.BATCH_SIZE
-                epoch_loss += esum.scalar_value() / num_words
+                epoch_loss += esum.scalar_value() #/ num_words
                 esum.backward()
                 trainer.update()
             # if epoch_loss < 10:
             #     end = time.time()
             #     print 'TIME ELAPSED:', end - start, 'SECONDS'
             #     break
-            print 'Epoch:',epoch
+            #print 'Epoch:',epoch
+            print "Epoch %d: loss=%f \n" % (epoch, epoch_loss)
             training_log.write("Epoch %d: loss=%f \n" % (epoch, epoch_loss))
             training_log.flush()
             trainer.update_epoch(1.0)
@@ -286,6 +288,6 @@ def main():
     # new_attention = Attention(new_model, list(training_src), list(training_tgt))
     # new_attention.restore(model,10)
     # print new_attention.translate_sentence(training_src[0])
-            
+
 
 if __name__ == '__main__': main()
