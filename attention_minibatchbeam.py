@@ -1,6 +1,6 @@
 from collections import defaultdict
 import dynet as dy
-import _gdynet as dy
+#import _gdynet as dy
 import numpy as np
 import random
 import sys
@@ -8,7 +8,7 @@ import time
 from itertools import count
 from datetime import datetime
 
-dy.init()
+#dy.init()
 
 ## from EMNLP tutorial code
 class Vocab:
@@ -354,11 +354,9 @@ def build_dict(sentences):
     return word_freq
 def main():
     training_log = open('training-'+str(datetime.now())+'.log','w')
-    translation_result = open('translation-beam.txt','w')
-    translation_result1 = open('translation-greedy.txt','w')
     
     model = dy.Model()
-    trainer = dy.AdamTrainer(model)
+    trainer = dy.SimpleSGDTrainer(model)
     training_src = read_file(sys.argv[1])
     word_freq_src = build_dict(training_src)
 
@@ -422,19 +420,19 @@ def main():
                 dev_words += num_words
                 dev_loss += esum.scalar_value() #/ num_words
         print 'Dev:',epoch, 'Perplexity Per Word:', np.exp(dev_loss / dev_words)
-        training_log.write("Dev %d: perplexity=%f \n" % (np.exp(epoch, dev_loss / dev_words)))
+        training_log.write("Dev %d: perplexity=%f \n" % (epoch,np.exp( dev_loss / dev_words)))
         training_log.flush()
-        if np.exp(dev_loss / dev_words) < minDevLoss:
+        if np.exp(dev_loss / dev_words) < min_dev_loss:
             attention.save()
-            minDevLoss = np.exp(dev_loss / dev_words)
+            min_dev_loss = np.exp(dev_loss / dev_words)
     
-
-
-    for sentence in test_src:
-        translation_result1.write(attention.translate_sentence_ori(sentence)+'\n')
-        translation_result1.flush()
-        translation_result.write(attention.translate_sentence_beam(sentence)+'\n')
-        translation_result.flush()
+            translation_result = open('translation-beam.txt','w')
+            translation_result1 = open('translation-greedy.txt','w')
+            for sentence in test_src:
+                translation_result1.write(attention.translate_sentence_ori(sentence)+'\n')
+                translation_result1.flush()
+                translation_result.write(attention.translate_sentence_beam(sentence)+'\n')
+                translation_result.flush()
         
     # new_model = dy.Model()
     # new_attention = Attention(new_model, list(training_src), list(training_tgt))
